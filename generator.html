@@ -61,39 +61,51 @@
             return index + "," + encoded_data;
           };
 
+          const compute_hash = (data_array) => {
+            let hash = 0;
+            for (let i = 0; i < Math.min(data_array.length, 1024); i++) {
+              hash = (hash * 31 + data_array[i]) & 0xffffffff;
+            }
+            return hash.toString(16);
+          };
+
           const stop_transfer = () => {
             is_transferring.value = false;
-            user_message.value = "Choose file to get started";
           };
 
           const start_transfer = async () => {
             let file_input = document.getElementById("file_input");
             is_transferring.value = true;
+            let loop_count = 0;
             let file = file_input.files[0];
-            let data_chunks = [];
             let data_array = pako.gzip(await file.arrayBuffer(), { level: 9 });
             let total_chunks = Math.ceil(data_array.length / chunk_size);
-            let file_metadata = { name: file.name, chunks: total_chunks };
-            qrcode_object.clear();
-            qrcode_object.makeCode(JSON.stringify(file_metadata));
-            user_message.value = "Starting data transfer in few seconds ...";
-            await new Promise((r) => setTimeout(r, 1000));
-            for (let i = 0; i < total_chunks; i++) {
-              await new Promise((r) => setTimeout(r, 50));
-              let start = i * chunk_size;
-              let chunk = data_array.subarray(start, start + chunk_size);
-              let encoded_data = encode_data(i, chunk);
+            let file_hash = compute_hash(data_array);
+            let file_metadata = { name: file.name, chunks: total_chunks, hash: file_hash };
+
+            while (is_transferring.value) {
+              loop_count++;
               qrcode_object.clear();
-              qrcode_object.makeCode(encoded_data);
-              user_message.value = `Transfering Chunk ${i}/${total_chunks} ...`;
-              if (!is_transferring.value) {
-                user_message.value = "Choose file to get started";
+              qrcode_object.makeCode(JSON.stringify(file_metadata));
+              user_message.value = `Loop ${loop_count} — Sending metadata...`;
+              await new Promise((r) => setTimeout(r, 1000));
+              if (!is_transferring.value) break;
+
+              for (let i = 0; i < total_chunks; i++) {
+                if (!is_transferring.value) break;
+                await new Promise((r) => setTimeout(r, 50));
+                let start = i * chunk_size;
+                let chunk = data_array.subarray(start, start + chunk_size);
+                let encoded_data = encode_data(i, chunk);
                 qrcode_object.clear();
-                qrcode_object.makeCode("Choose file to get started");
-                break;
+                qrcode_object.makeCode(encoded_data);
+                user_message.value = `Loop ${loop_count} — Chunk ${i + 1}/${total_chunks}`;
               }
             }
-            stop_transfer();
+
+            qrcode_object.clear();
+            qrcode_object.makeCode("Choose file to get started");
+            user_message.value = "Choose file to get started";
           };
 
           onMounted(() => {
