@@ -49,6 +49,7 @@
           const user_message = ref("Choose file to get started");
           const is_transferring = ref(false);
           const chunk_size = 600;
+          const display_ms = 150;
           let qrcode_object = "";
 
           const encode_data = (index, input_bytes) => {
@@ -110,7 +111,7 @@
                 qrcode_object.clear();
                 qrcode_object.makeCode(metadata_string);
                 user_message.value = `Loop ${loop_count}: sending metadata ...`;
-                await new Promise((r) => setTimeout(r, 50));
+                await new Promise((r) => setTimeout(r, display_ms));
                 for (let i = 0; i < total_chunks; i++) {
                   if (!is_transferring.value) break;
                   let start = i * chunk_size;
@@ -120,7 +121,7 @@
                   qrcode_object.clear();
                   qrcode_object.makeCode(encoded_data);
                   user_message.value = `Loop ${loop_count}: chunk ${i + 1}/${total_chunks} ...`;
-                  await new Promise((r) => setTimeout(r, 50));
+                  await new Promise((r) => setTimeout(r, display_ms));
                   if (!is_transferring.value) break;
                 }
               }
