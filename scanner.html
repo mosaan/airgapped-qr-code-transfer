@@ -32,6 +32,13 @@
         >
           Stop Receiver
         </button>
+        <button
+          v-if="!is_receiving"
+          v-on:click="clear_cache"
+          class="mb-6 p-1 border-2 border-red-400 text-red-600 text-sm"
+        >
+          Clear Cache
+        </button>
         <video id="videoElement" muted autoplay playsinline></video>
       </div>
     </div>
@@ -39,15 +46,15 @@
     <script src="https://cdn.jsdelivr.net/npm/@undecaf/zbar-wasm@latest/dist/index.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pako/2.0.3/pako.min.js"></script>
     <script>
-      const { createApp, ref, reactive, onMounted, computed } = Vue;
+      const { createApp, ref, reactive, onMounted } = Vue;
 
       createApp({
         setup() {
           const user_message = ref("Click receive button to start receiving");
           const decoded_chunks = ref({});
-          const total_chunks = ref(-1);
           const file_metadata = reactive({});
           const is_receiving = ref(false);
+          const current_transfer_id = ref("");
           let canvas, context, videoElement;
 
           const decode_data = (input_string) => {
@@ -78,62 +85,132 @@
             URL.revokeObjectURL(url);
           };
 
+          const save_to_storage = (tid) => {
+            try {
+              localStorage.setItem(
+                "qr_transfer_" + tid,
+                JSON.stringify({
+                  transferId: tid,
+                  name: file_metadata.name,
+                  chunks: file_metadata.chunks,
+                  received: decoded_chunks.value,
+                })
+              );
+            } catch (e) {
+              console.warn("localStorage save failed:", e);
+            }
+          };
+
+          const load_from_storage = (tid) => {
+            try {
+              const raw = localStorage.getItem("qr_transfer_" + tid);
+              return raw ? JSON.parse(raw) : null;
+            } catch {
+              return null;
+            }
+          };
+
+          const clear_cache = () => {
+            for (const key of Object.keys(localStorage)) {
+              if (key.startsWith("qr_transfer_")) {
+                localStorage.removeItem(key);
+              }
+            }
+            decoded_chunks.value = {};
+            current_transfer_id.value = "";
+            Object.keys(file_metadata).forEach((k) => delete file_metadata[k]);
+            user_message.value = "Cache cleared. Click Start Receiver to begin.";
+          };
+
           const stop_receiver = () => {
             is_receiving.value = false;
-            decoded_chunks.value = {};
-            Object.assign(file_metadata, {});
-            user_message.value = "Click receive button to start receiving";
+            const count = Object.keys(decoded_chunks.value).length;
+            const total = file_metadata.chunks || 0;
+            user_message.value = `Paused — ${count}/${total} chunks received. Click Start Receiver to resume.`;
           };
 
           const start_receiver = async () => {
-            decoded_chunks.value = {};
             is_receiving.value = true;
+            if (!current_transfer_id.value) {
+              user_message.value = "Waiting for sender metadata QR...";
+            } else {
+              const count = Object.keys(decoded_chunks.value).length;
+              user_message.value = `Resuming — ${count}/${file_metadata.chunks || 0} chunks received...`;
+            }
+
             while (
               file_metadata.chunks != Object.keys(decoded_chunks.value).length
             ) {
               try {
                 await new Promise((r) => setTimeout(r, 10));
                 context.drawImage(videoElement, 0, 0);
-                image_data = context.getImageData(
+                const image_data = context.getImageData(
                   0,
                   0,
                   canvas.width,
                   canvas.height
                 );
-                let symbols = await zbarWasm.scanImageData(image_data);
-                if (!symbols || !symbols.length) {
-                  continue;
-                }
-                let decoded_data = symbols[0].decode();
+                const symbols = await zbarWasm.scanImageData(image_data);
+                if (!symbols || !symbols.length) continue;
+                const decoded_data = symbols[0].decode();
+
                 if (decoded_data.includes("chunks")) {
-                  Object.assign(file_metadata, JSON.parse(decoded_data));
-                  decoded_chunks.value = {};
-                  user_message.value = `Transferring file: ${file_metadata.name}`;
+                  const new_meta = JSON.parse(decoded_data);
+                  const new_tid = `${new_meta.name}_${new_meta.chunks}_${new_meta.hash || ""}`;
+                  if (new_tid !== current_transfer_id.value) {
+                    current_transfer_id.value = new_tid;
+                    Object.keys(file_metadata).forEach(
+                      (k) => delete file_metadata[k]
+                    );
+                    Object.assign(file_metadata, new_meta);
+                    const saved = load_from_storage(new_tid);
+                    if (saved && Object.keys(saved.received).length > 0) {
+                      decoded_chunks.value = saved.received;
+                      user_message.value = `Resumed: ${file_metadata.name} — ${Object.keys(decoded_chunks.value).length}/${file_metadata.chunks} chunks already received`;
+                    } else {
+                      decoded_chunks.value = {};
+                      user_message.value = `Transferring file: ${file_metadata.name}`;
+                    }
+                  }
                 } else if (decoded_data.split(",").length == 2) {
-                  let raw_data = decode_data(decoded_data);
-                  decoded_chunks.value[raw_data["index"]] = raw_data["data"];
+                  const raw_data = decode_data(decoded_data);
+                  if (decoded_chunks.value[raw_data.index] === undefined) {
+                    decoded_chunks.value[raw_data.index] = raw_data.data;
+                    if (current_transfer_id.value) {
+                      save_to_storage(current_transfer_id.value);
+                    }
+                  }
                 }
                 window.decoded_chunks = decoded_chunks.value;
               } catch (error) {
                 console.error("Error in Loop: ", error);
               }
+
               if (!is_receiving.value) {
-                Object.assign(file_metadata, {});
-                decoded_chunks.value = {};
-                user_message.value = "Click receive button to start receiving";
-                return true;
+                return;
               }
             }
+
+            if (!file_metadata.chunks) return;
+
             user_message.value = "Data Transfer Complete";
-            output_array = [];
+            localStorage.removeItem("qr_transfer_" + current_transfer_id.value);
+
+            const output_array = [];
             for (let i = 0; i < file_metadata.chunks; i++) {
-              output_array = output_array.concat(decoded_chunks.value[i]);
+              output_array.push(...decoded_chunks.value[i]);
             }
-            let output_unit8array = Uint8Array.from(output_array);
-            window.output_unit8array = output_unit8array;
-            let infalted_array = pako.inflate(window.output_unit8array);
-            download_file(infalted_array, file_metadata.name);
-            stop_receiver();
+            const output_uint8array = Uint8Array.from(output_array);
+            window.output_uint8array = output_uint8array;
+            const inflated_array = pako.inflate(output_uint8array);
+            download_file(inflated_array, file_metadata.name);
+
+            decoded_chunks.value = {};
+            current_transfer_id.value = "";
+            Object.keys(file_metadata).forEach((k) => delete file_metadata[k]);
+            is_receiving.value = false;
+            user_message.value =
+              "Transfer complete. Click Start Receiver for another file.";
           };
 
           onMounted(async () => {
@@ -153,10 +230,11 @@
           return {
             user_message,
             start_receiver,
+            stop_receiver,
+            clear_cache,
             is_receiving,
             file_metadata,
             decoded_chunks,
-            stop_receiver,
           };
         },
       }).mount("#app");
