@@ -61,6 +61,16 @@
             return index + "," + encoded_data;
           };
 
+          // ファイル内容（圧縮後バイト列）の先頭1024バイトから簡易ハッシュを計算し、
+          // 「同名・同チャンク数だが別ファイル」を受信側が区別できるようにする。
+          const compute_hash = (data_array) => {
+            let hash = 0;
+            for (let i = 0; i < Math.min(data_array.length, 1024); i++) {
+              hash = (hash * 31 + data_array[i]) & 0xffffffff;
+            }
+            return (hash >>> 0).toString(16);
+          };
+
           const stop_transfer = () => {
             is_transferring.value = false;
             user_message.value = "Choose file to get started";
@@ -70,30 +80,43 @@
             let file_input = document.getElementById("file_input");
             is_transferring.value = true;
             let file = file_input.files[0];
-            let data_chunks = [];
             let data_array = pako.gzip(await file.arrayBuffer(), { level: 9 });
             let total_chunks = Math.ceil(data_array.length / chunk_size);
-            let file_metadata = { name: file.name, chunks: total_chunks };
-            qrcode_object.clear();
-            qrcode_object.makeCode(JSON.stringify(file_metadata));
+            let file_hash = compute_hash(data_array);
+            let file_metadata = {
+              name: file.name,
+              chunks: total_chunks,
+              hash: file_hash,
+            };
+            let metadata_string = JSON.stringify(file_metadata);
             user_message.value = "Starting data transfer in few seconds ...";
+            qrcode_object.clear();
+            qrcode_object.makeCode(metadata_string);
             await new Promise((r) => setTimeout(r, 1000));
-            for (let i = 0; i < total_chunks; i++) {
-              await new Promise((r) => setTimeout(r, 50));
-              let start = i * chunk_size;
-              let chunk = data_array.subarray(start, start + chunk_size);
-              let encoded_data = encode_data(i, chunk);
+            // 全チャンクを繰り返しループ送信する。1 回でも読み取りに失敗しても
+            // 次のループで再送されるため、受信側が累積で取りこぼしを埋められる。
+            let loop_count = 0;
+            while (is_transferring.value) {
+              loop_count++;
+              // 各ループ冒頭でメタデータを再送し、途中参加の受信側にも転送情報を伝える。
               qrcode_object.clear();
-              qrcode_object.makeCode(encoded_data);
-              user_message.value = `Transfering Chunk ${i}/${total_chunks} ...`;
-              if (!is_transferring.value) {
-                user_message.value = "Choose file to get started";
+              qrcode_object.makeCode(metadata_string);
+              user_message.value = `Loop ${loop_count}: sending metadata ...`;
+              await new Promise((r) => setTimeout(r, 50));
+              for (let i = 0; i < total_chunks; i++) {
+                if (!is_transferring.value) break;
+                await new Promise((r) => setTimeout(r, 50));
+                let start = i * chunk_size;
+                let chunk = data_array.subarray(start, start + chunk_size);
+                let encoded_data = encode_data(i, chunk);
                 qrcode_object.clear();
-                qrcode_object.makeCode("Choose file to get started");
-                break;
+                qrcode_object.makeCode(encoded_data);
+                user_message.value = `Loop ${loop_count}: chunk ${i + 1}/${total_chunks} ...`;
               }
             }
-            stop_transfer();
+            qrcode_object.clear();
+            qrcode_object.makeCode("Choose file to get started");
+            user_message.value = "Choose file to get started";
           };
 
           onMounted(() => {
