@@ -32,6 +32,13 @@
         >
           Stop Receiver
         </button>
+        <button
+          v-if="!is_receiving"
+          v-on:click="clear_cache"
+          class="mb-6 p-1 border-2 border-gray-500"
+        >
+          Clear Cache
+        </button>
         <video id="videoElement" muted autoplay playsinline></video>
       </div>
     </div>
@@ -49,6 +56,63 @@
           const file_metadata = reactive({});
           const is_receiving = ref(false);
           let canvas, context, videoElement;
+          // 現在受信中の転送を一意に識別する ID。メタデータ受信のたびに
+          // 比較し、別ファイルの転送が始まった場合のみ状態をリセットする。
+          let current_transfer_id = null;
+
+          const STORAGE_PREFIX = "qr_transfer_";
+
+          const make_transfer_id = (metadata) =>
+            `${metadata.name}_${metadata.chunks}_${metadata.hash}`;
+
+          // 受信済みチャンクを localStorage に永続化する。ページリロードや
+          // 手動停止後も部分受信データが残り、再開時に差分だけ受信できる。
+          const save_state = () => {
+            if (!current_transfer_id) return;
+            try {
+              const payload = {
+                transferId: current_transfer_id,
+                name: file_metadata.name,
+                chunks: file_metadata.chunks,
+                received: decoded_chunks.value,
+              };
+              localStorage.setItem(
+                STORAGE_PREFIX + current_transfer_id,
+                JSON.stringify(payload)
+              );
+            } catch (error) {
+              console.error("Failed to persist state: ", error);
+            }
+          };
+
+          const load_state = (transfer_id) => {
+            try {
+              const raw = localStorage.getItem(STORAGE_PREFIX + transfer_id);
+              if (!raw) return null;
+              return JSON.parse(raw);
+            } catch (error) {
+              console.error("Failed to load state: ", error);
+              return null;
+            }
+          };
+
+          const clear_state = (transfer_id) => {
+            if (!transfer_id) return;
+            localStorage.removeItem(STORAGE_PREFIX + transfer_id);
+          };
+
+          const clear_cache = () => {
+            const keys = [];
+            for (let i = 0; i < localStorage.length; i++) {
+              const key = localStorage.key(i);
+              if (key && key.startsWith(STORAGE_PREFIX)) keys.push(key);
+            }
+            keys.forEach((key) => localStorage.removeItem(key));
+            decoded_chunks.value = {};
+            for (const key of Object.keys(file_metadata)) delete file_metadata[key];
+            current_transfer_id = null;
+            user_message.value = `Cleared ${keys.length} cached transfer(s)`;
+          };
 
           const decode_data = (input_string) => {
             const encoded_data = atob(input_string.split(",")[1]);
@@ -80,16 +144,40 @@
 
           const stop_receiver = () => {
             is_receiving.value = false;
-            decoded_chunks.value = {};
-            Object.assign(file_metadata, {});
-            user_message.value = "Click receive button to start receiving";
+            // 受信済みデータは保持し localStorage にも残す。再開時に差分から続けられる。
+            save_state();
+            user_message.value =
+              "Receiver stopped. Cached progress is preserved.";
+          };
+
+          // メタデータ受信時のハンドラ。同一転送ならリセットせず累積を維持し、
+          // 別ファイルの転送なら状態を切り替えて localStorage から復元する。
+          const handle_metadata = (decoded_data) => {
+            const metadata = JSON.parse(decoded_data);
+            const new_id = make_transfer_id(metadata);
+            if (new_id === current_transfer_id) {
+              // 同一転送のメタデータ再送。状態は維持する。
+              return;
+            }
+            current_transfer_id = new_id;
+            Object.assign(file_metadata, metadata);
+            const saved = load_state(new_id);
+            if (saved && saved.received) {
+              decoded_chunks.value = saved.received;
+              user_message.value = `Resuming ${file_metadata.name}: ${
+                Object.keys(saved.received).length
+              }/${file_metadata.chunks} chunks restored`;
+            } else {
+              decoded_chunks.value = {};
+              user_message.value = `Transferring file: ${file_metadata.name}`;
+            }
           };
 
           const start_receiver = async () => {
-            decoded_chunks.value = {};
             is_receiving.value = true;
             while (
-              file_metadata.chunks != Object.keys(decoded_chunks.value).length
+              file_metadata.chunks != Object.keys(decoded_chunks.value).length ||
+              file_metadata.chunks == null
             ) {
               try {
                 await new Promise((r) => setTimeout(r, 10));
@@ -106,21 +194,29 @@
                 }
                 let decoded_data = symbols[0].decode();
                 if (decoded_data.includes("chunks")) {
-                  Object.assign(file_metadata, JSON.parse(decoded_data));
-                  decoded_chunks.value = {};
-                  user_message.value = `Transferring file: ${file_metadata.name}`;
+                  handle_metadata(decoded_data);
                 } else if (decoded_data.split(",").length == 2) {
                   let raw_data = decode_data(decoded_data);
-                  decoded_chunks.value[raw_data["index"]] = raw_data["data"];
+                  // 既知のチャンクは上書きせず、未受信分のみ取り込んで永続化する。
+                  if (
+                    decoded_chunks.value[raw_data["index"]] === undefined
+                  ) {
+                    decoded_chunks.value[raw_data["index"]] = raw_data["data"];
+                    save_state();
+                    user_message.value = `Received ${
+                      Object.keys(decoded_chunks.value).length
+                    }/${file_metadata.chunks ?? "?"} chunks`;
+                  }
                 }
                 window.decoded_chunks = decoded_chunks.value;
               } catch (error) {
                 console.error("Error in Loop: ", error);
               }
               if (!is_receiving.value) {
-                Object.assign(file_metadata, {});
-                decoded_chunks.value = {};
-                user_message.value = "Click receive button to start receiving";
+                // 状態は保持したまま停止する（localStorage に残す）。
+                save_state();
+                user_message.value =
+                  "Receiver stopped. Cached progress is preserved.";
                 return true;
               }
             }
@@ -133,7 +229,13 @@
             window.output_unit8array = output_unit8array;
             let infalted_array = pako.inflate(window.output_unit8array);
             download_file(infalted_array, file_metadata.name);
-            stop_receiver();
+            // 完了したのでキャッシュを削除し、メモリ上の状態もリセットする。
+            // （次回 Start 時に完了済みデータで即終了→再ダウンロードするのを防ぐ）
+            clear_state(current_transfer_id);
+            current_transfer_id = null;
+            decoded_chunks.value = {};
+            for (const key of Object.keys(file_metadata)) delete file_metadata[key];
+            is_receiving.value = false;
           };
 
           onMounted(async () => {
@@ -157,6 +259,7 @@
             file_metadata,
             decoded_chunks,
             stop_receiver,
+            clear_cache,
           };
         },
       }).mount("#app");
