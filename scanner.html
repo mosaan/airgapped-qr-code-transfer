@@ -147,6 +147,9 @@
           // 別ファイルの転送なら状態を切り替えて localStorage から復元する。
           const handle_metadata = (decoded_data) => {
             const metadata = JSON.parse(decoded_data);
+            // ファイル名はUTF-8バイト列のbase64で送られるので元の文字列に戻す。
+            const name_bytes = Uint8Array.from(atob(metadata.name), c => c.charCodeAt(0));
+            metadata.name = new TextDecoder().decode(name_bytes);
             const new_id = make_transfer_id(metadata);
             if (new_id === current_transfer_id) {
               // 同一転送のメタデータ再送。状態は維持する。

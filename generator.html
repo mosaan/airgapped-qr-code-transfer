@@ -86,12 +86,17 @@
               let data_array = pako.gzip(await file.arrayBuffer(), { level: 9 });
               let total_chunks = Math.ceil(data_array.length / chunk_size);
               let file_hash = compute_hash(data_array);
+              // ファイル名をUTF-8バイト列→base64に変換してASCII文字のみにする。
+              // 日本語などマルチバイト文字を含むファイル名でもQRコードに収まる。
+              const name_utf8 = new TextEncoder().encode(file.name);
+              const name_b64 = btoa(String.fromCharCode.apply(null, name_utf8));
               let file_metadata = {
-                name: file.name,
+                name: name_b64,
                 chunks: total_chunks,
                 hash: file_hash,
               };
               let metadata_string = JSON.stringify(file_metadata);
+              console.log("[META] metadata_string length=", metadata_string.length, "content=", metadata_string);
               user_message.value = "Starting data transfer in few seconds ...";
               qrcode_object.clear();
               qrcode_object.makeCode(metadata_string);
@@ -111,6 +116,7 @@
                   let start = i * chunk_size;
                   let chunk = data_array.subarray(start, start + chunk_size);
                   let encoded_data = encode_data(i, chunk);
+                  if (i === 0) console.log("[CHUNK0] length=", encoded_data.length, "chunk_bytes=", chunk.length);
                   qrcode_object.clear();
                   qrcode_object.makeCode(encoded_data);
                   user_message.value = `Loop ${loop_count}: chunk ${i + 1}/${total_chunks} ...`;
