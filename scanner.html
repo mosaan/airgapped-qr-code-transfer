@@ -197,8 +197,15 @@
                 // includes("chunks") は base64 データに "chunks" が偶然含まれると誤検知するため使わない。
                 if (decoded_data.charAt(0) === "{") {
                   handle_metadata(decoded_data);
+                  console.log("[META] chunks=", file_metadata.chunks,
+                    "received=", Object.keys(decoded_chunks.value).length,
+                    "transferId=", current_transfer_id);
                 } else if (decoded_data.includes(",")) {
                   let raw_data = decode_data(decoded_data);
+                  console.log("[CHUNK] index=", raw_data["index"],
+                    "already=", decoded_chunks.value[raw_data["index"]] !== undefined,
+                    "total=", file_metadata.chunks,
+                    "received=", Object.keys(decoded_chunks.value).length);
                   // 既知のチャンクは上書きせず、未受信分のみ取り込んで永続化する。
                   if (
                     decoded_chunks.value[raw_data["index"]] === undefined

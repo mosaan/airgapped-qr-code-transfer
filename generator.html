@@ -111,13 +111,14 @@
                 await new Promise((r) => setTimeout(r, 50));
                 for (let i = 0; i < total_chunks; i++) {
                   if (!is_transferring.value) break;
-                  await new Promise((r) => setTimeout(r, 50));
                   let start = i * chunk_size;
                   let chunk = data_array.subarray(start, start + chunk_size);
                   let encoded_data = encode_data(i, chunk);
                   qrcode_object.clear();
                   qrcode_object.makeCode(encoded_data);
                   user_message.value = `Loop ${loop_count}: chunk ${i + 1}/${total_chunks} ...`;
+                  await new Promise((r) => setTimeout(r, 50));
+                  if (!is_transferring.value) break;
                 }
               }
             } catch (error) {
