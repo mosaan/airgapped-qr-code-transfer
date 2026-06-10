@@ -116,14 +116,7 @@
 
           const decode_data = (input_string) => {
             const encoded_data = atob(input_string.split(",")[1]);
-            const encoded_array = Array.from(encoded_data, (char) =>
-              char.charCodeAt(0)
-            );
-            const utf8Decoder = new TextDecoder();
-            const output_string = utf8Decoder.decode(
-              new Uint8Array(encoded_array)
-            );
-            const data_array = Array.from(output_string, (char) =>
+            const data_array = Array.from(encoded_data, (char) =>
               char.charCodeAt(0)
             );
             return {

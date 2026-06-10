@@ -48,15 +48,12 @@
         setup() {
           const user_message = ref("Choose file to get started");
           const is_transferring = ref(false);
-          const chunk_size = 250;
+          const chunk_size = 1500;
           let qrcode_object = "";
 
           const encode_data = (index, input_bytes) => {
-            let encoded_string = String.fromCharCode.apply(null, input_bytes);
-            let utf8Encoder = new TextEncoder();
-            let utf8_bytes = utf8Encoder.encode(encoded_string);
-            let encoded_data = btoa(
-              String.fromCharCode.apply(null, utf8_bytes)
+            const encoded_data = btoa(
+              String.fromCharCode.apply(null, input_bytes)
             );
             return index + "," + encoded_data;
           };
