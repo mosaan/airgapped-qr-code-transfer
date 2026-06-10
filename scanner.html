@@ -176,8 +176,7 @@
           const start_receiver = async () => {
             is_receiving.value = true;
             while (
-              file_metadata.chunks != Object.keys(decoded_chunks.value).length ||
-              file_metadata.chunks == null
+              file_metadata.chunks !== Object.keys(decoded_chunks.value).length
             ) {
               try {
                 await new Promise((r) => setTimeout(r, 10));
@@ -193,9 +192,12 @@
                   continue;
                 }
                 let decoded_data = symbols[0].decode();
-                if (decoded_data.includes("chunks")) {
+                // メタデータQRはJSONのため必ず"{" で始まる。
+                // チャンクQRは "INDEX,BASE64" 形式で数字始まり。
+                // includes("chunks") は base64 データに "chunks" が偶然含まれると誤検知するため使わない。
+                if (decoded_data.charAt(0) === "{") {
                   handle_metadata(decoded_data);
-                } else if (decoded_data.split(",").length == 2) {
+                } else if (decoded_data.includes(",")) {
                   let raw_data = decode_data(decoded_data);
                   // 既知のチャンクは上書きせず、未受信分のみ取り込んで永続化する。
                   if (
