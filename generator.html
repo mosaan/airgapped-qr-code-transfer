@@ -22,10 +22,12 @@
           />
         </div>
         <div class="w-1/2 mb-4 flex items-center gap-3">
-          <label class="text-sm text-gray-700 whitespace-nowrap">Display: {{display_ms}}ms</label>
+          <label class="text-sm text-gray-700 whitespace-nowrap">
+            Speed: {{chunks_per_sec}} chunks/sec ({{Math.round(1000/chunks_per_sec)}}ms)
+          </label>
           <input
-            type="range" min="50" max="500" step="50"
-            v-model.number="display_ms"
+            type="range" min="1" max="20" step="1"
+            v-model.number="chunks_per_sec"
             :disabled="is_transferring"
             class="w-full"
           />
@@ -59,7 +61,7 @@
           const user_message = ref("Choose file to get started");
           const is_transferring = ref(false);
           const chunk_size = 600;
-          const display_ms = ref(150);
+          const chunks_per_sec = ref(7);
           let qrcode_object = "";
 
           const encode_data = (index, input_bytes) => {
@@ -121,7 +123,7 @@
                 qrcode_object.clear();
                 qrcode_object.makeCode(metadata_string);
                 user_message.value = `Loop ${loop_count}: sending metadata ...`;
-                await new Promise((r) => setTimeout(r, display_ms.value));
+                await new Promise((r) => setTimeout(r, Math.round(1000 / chunks_per_sec.value)));
                 for (let i = 0; i < total_chunks; i++) {
                   if (!is_transferring.value) break;
                   let start = i * chunk_size;
@@ -131,7 +133,7 @@
                   qrcode_object.clear();
                   qrcode_object.makeCode(encoded_data);
                   user_message.value = `Loop ${loop_count}: chunk ${i + 1}/${total_chunks} ...`;
-                  await new Promise((r) => setTimeout(r, display_ms.value));
+                  await new Promise((r) => setTimeout(r, Math.round(1000 / chunks_per_sec.value)));
                   if (!is_transferring.value) break;
                 }
               }
@@ -166,7 +168,7 @@
             start_transfer,
             stop_transfer,
             is_transferring,
-            display_ms,
+            chunks_per_sec,
           };
         },
       }).mount("#app");
