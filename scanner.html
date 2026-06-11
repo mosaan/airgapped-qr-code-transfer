@@ -113,23 +113,37 @@
             return result;
           });
 
-          // 未受信チャンクの連続範囲を [start, end] の配列として返す。
-          // Sender 側で範囲指定再送する際に直接入力できる形式にする。
+          // 未受信チャンクの連続範囲を求め、近接する範囲をさらに結合して返す。
+          // 許容ギャップ内に収まる範囲同士は1つにまとめ、Sender の範囲入力に
+          // そのまま使える粒度にする。
           const missing_ranges = computed(() => {
             const total = file_metadata.chunks;
             if (!total) return [];
-            const ranges = [];
+
+            // 第1パス: 連続欠損を範囲化
+            const raw = [];
             let rs = null;
             for (let i = 0; i < total; i++) {
               if (decoded_chunks.value[i] === undefined) {
                 if (rs === null) rs = i;
               } else if (rs !== null) {
-                ranges.push([rs, i - 1]);
+                raw.push([rs, i - 1]);
                 rs = null;
               }
             }
-            if (rs !== null) ranges.push([rs, total - 1]);
-            return ranges;
+            if (rs !== null) raw.push([rs, total - 1]);
+
+            // 第2パス: 近接する範囲を結合（ギャップ ≤ 総チャンク数の2% or 10）
+            const tolerance = Math.max(10, Math.round(total * 0.02));
+            const merged = [];
+            for (const [s, e] of raw) {
+              if (!merged.length || s - merged[merged.length - 1][1] - 1 > tolerance) {
+                merged.push([s, e]);
+              } else {
+                merged[merged.length - 1][1] = e;
+              }
+            }
+            return merged;
           });
 
           const make_transfer_id = (metadata) =>
