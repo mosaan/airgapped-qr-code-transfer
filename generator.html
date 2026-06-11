@@ -21,6 +21,15 @@
             type="file"
           />
         </div>
+        <div class="w-1/2 mb-4 flex items-center gap-3">
+          <label class="text-sm text-gray-700 whitespace-nowrap">Display: {{display_ms}}ms</label>
+          <input
+            type="range" min="50" max="500" step="50"
+            v-model.number="display_ms"
+            :disabled="is_transferring"
+            class="w-full"
+          />
+        </div>
         <button
           v-if="!is_transferring"
           v-on:click="start_transfer"
@@ -44,12 +53,13 @@
     <script>
       const { createApp, ref, onMounted } = Vue;
 
+
       createApp({
         setup() {
           const user_message = ref("Choose file to get started");
           const is_transferring = ref(false);
           const chunk_size = 600;
-          const display_ms = 150;
+          const display_ms = ref(150);
           let qrcode_object = "";
 
           const encode_data = (index, input_bytes) => {
@@ -111,7 +121,7 @@
                 qrcode_object.clear();
                 qrcode_object.makeCode(metadata_string);
                 user_message.value = `Loop ${loop_count}: sending metadata ...`;
-                await new Promise((r) => setTimeout(r, display_ms));
+                await new Promise((r) => setTimeout(r, display_ms.value));
                 for (let i = 0; i < total_chunks; i++) {
                   if (!is_transferring.value) break;
                   let start = i * chunk_size;
@@ -121,7 +131,7 @@
                   qrcode_object.clear();
                   qrcode_object.makeCode(encoded_data);
                   user_message.value = `Loop ${loop_count}: chunk ${i + 1}/${total_chunks} ...`;
-                  await new Promise((r) => setTimeout(r, display_ms));
+                  await new Promise((r) => setTimeout(r, display_ms.value));
                   if (!is_transferring.value) break;
                 }
               }
@@ -156,6 +166,7 @@
             start_transfer,
             stop_transfer,
             is_transferring,
+            display_ms,
           };
         },
       }).mount("#app");
