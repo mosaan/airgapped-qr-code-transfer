@@ -15,8 +15,10 @@
         <div class="text-xl my-4">Data Receiver Mode</div>
         <div class="text-sm mb-4">{{user_message}}</div>
         <div class="text-sm mb-4">
-          Progress: {{Object.keys(decoded_chunks).length}} /
-          {{file_metadata.chunks || 0}}
+          Progress: {{Object.keys(decoded_chunks).length}} / {{file_metadata.chunks || 0}}
+          <span v-if="capture_info">
+            &nbsp;|&nbsp;seen {{capture_info.seen}}, captured {{capture_info.pct}}%
+          </span>
         </div>
         <button
           v-if="!is_receiving"
@@ -61,6 +63,17 @@
           let current_transfer_id = null;
 
           const STORAGE_PREFIX = "qr_transfer_";
+
+          // 受信済みチャンクのうち最大インデックスを「送信側が今どこまで来たか」の
+          // 推定値として、そこまでの捕捉率を計算する。
+          const capture_info = computed(() => {
+            const keys = Object.keys(decoded_chunks.value).map(Number);
+            if (keys.length === 0) return null;
+            const max_index = Math.max(...keys);
+            const seen = max_index + 1;
+            const pct = Math.round((keys.length / seen) * 100);
+            return { seen, pct };
+          });
 
           const make_transfer_id = (metadata) =>
             `${metadata.name}_${metadata.chunks}_${metadata.hash}`;
@@ -265,6 +278,7 @@
             decoded_chunks,
             stop_receiver,
             clear_cache,
+            capture_info,
           };
         },
       }).mount("#app");
