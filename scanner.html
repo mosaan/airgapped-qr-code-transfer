@@ -15,7 +15,7 @@
         <div class="text-xl my-4">Data Receiver Mode</div>
         <div class="text-sm mb-4">{{user_message}}</div>
         <div class="text-sm mb-4">
-          Progress: {{Object.keys(decoded_chunks).length}} / {{file_metadata.chunks || 0}}
+          Progress: {{received_count}} / {{file_metadata.chunks || 0}}
           <span v-if="capture_info">
             &nbsp;|&nbsp;seen {{capture_info.seen}}, captured {{capture_info.pct}}%
           </span>
@@ -73,7 +73,7 @@
         setup() {
           const user_message = ref("Click receive button to start receiving");
           const decoded_chunks = ref({});
-          const total_chunks = ref(-1);
+          const received_count = ref(0);
           const file_metadata = reactive({});
           const is_receiving = ref(false);
           let canvas, context, videoElement;
@@ -86,11 +86,14 @@
           // 受信済みチャンクのうち最大インデックスを「送信側が今どこまで来たか」の
           // 推定値として、そこまでの捕捉率を計算する。
           const capture_info = computed(() => {
-            const keys = Object.keys(decoded_chunks.value).map(Number);
-            if (keys.length === 0) return null;
-            const max_index = Math.max(...keys);
+            if (received_count.value === 0) return null;
+            const valid_keys = Object.keys(decoded_chunks.value)
+              .map(Number)
+              .filter(n => Number.isInteger(n) && n >= 0);
+            if (valid_keys.length === 0) return null;
+            const max_index = Math.max(...valid_keys);
             const seen = max_index + 1;
-            const pct = Math.round((keys.length / seen) * 100);
+            const pct = Math.round((received_count.value / seen) * 100);
             return { seen, pct };
           });
 
@@ -193,6 +196,7 @@
             }
             keys.forEach((key) => localStorage.removeItem(key));
             decoded_chunks.value = {};
+            received_count.value = 0;
             for (const key of Object.keys(file_metadata)) delete file_metadata[key];
             current_transfer_id = null;
             user_message.value = `Cleared ${keys.length} cached transfer(s)`;
@@ -244,20 +248,22 @@
             const saved = load_state(new_id);
             if (saved && saved.received) {
               decoded_chunks.value = saved.received;
-              user_message.value = `Resuming ${file_metadata.name}: ${
-                Object.keys(saved.received).length
-              }/${file_metadata.chunks} chunks restored`;
+              // NaN や範囲外キーを除いた正確なカウントを復元する。
+              received_count.value = Object.keys(saved.received).filter(k => {
+                const n = parseInt(k);
+                return Number.isInteger(n) && n >= 0 && n < metadata.chunks;
+              }).length;
+              user_message.value = `Resuming ${file_metadata.name}: ${received_count.value}/${file_metadata.chunks} chunks restored`;
             } else {
               decoded_chunks.value = {};
+              received_count.value = 0;
               user_message.value = `Transferring file: ${file_metadata.name}`;
             }
           };
 
           const start_receiver = async () => {
             is_receiving.value = true;
-            while (
-              file_metadata.chunks !== Object.keys(decoded_chunks.value).length
-            ) {
+            while (file_metadata.chunks !== received_count.value) {
               try {
                 await new Promise((r) => setTimeout(r, 10));
                 context.drawImage(videoElement, 0, 0);
@@ -282,19 +288,19 @@
                     "transferId=", current_transfer_id);
                 } else if (decoded_data.includes(",")) {
                   let raw_data = decode_data(decoded_data);
-                  console.log("[CHUNK] index=", raw_data["index"],
-                    "already=", decoded_chunks.value[raw_data["index"]] !== undefined,
+                  const idx = raw_data["index"];
+                  console.log("[CHUNK] index=", idx,
+                    "already=", decoded_chunks.value[idx] !== undefined,
                     "total=", file_metadata.chunks,
-                    "received=", Object.keys(decoded_chunks.value).length);
-                  // 既知のチャンクは上書きせず、未受信分のみ取り込んで永続化する。
-                  if (
-                    decoded_chunks.value[raw_data["index"]] === undefined
-                  ) {
-                    decoded_chunks.value[raw_data["index"]] = raw_data["data"];
+                    "received=", received_count.value);
+                  // インデックスが有効範囲内かを確認してから格納する。
+                  // NaN や範囲外インデックスを受け入れると終了カウントがずれる。
+                  const valid_idx = Number.isInteger(idx) && idx >= 0 && idx < file_metadata.chunks;
+                  if (valid_idx && decoded_chunks.value[idx] === undefined) {
+                    decoded_chunks.value[idx] = raw_data["data"];
+                    received_count.value++;
                     save_state();
-                    user_message.value = `Received ${
-                      Object.keys(decoded_chunks.value).length
-                    }/${file_metadata.chunks ?? "?"} chunks`;
+                    user_message.value = `Received ${received_count.value}/${file_metadata.chunks ?? "?"} chunks`;
                   }
                 }
                 window.decoded_chunks = decoded_chunks.value;
@@ -323,6 +329,7 @@
             clear_state(current_transfer_id);
             current_transfer_id = null;
             decoded_chunks.value = {};
+            received_count.value = 0;
             for (const key of Object.keys(file_metadata)) delete file_metadata[key];
             is_receiving.value = false;
           };
@@ -347,6 +354,7 @@
             is_receiving,
             file_metadata,
             decoded_chunks,
+            received_count,
             stop_receiver,
             clear_cache,
             capture_info,
