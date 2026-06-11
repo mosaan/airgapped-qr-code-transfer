@@ -20,6 +20,25 @@
             &nbsp;|&nbsp;seen {{capture_info.seen}}, captured {{capture_info.pct}}%
           </span>
         </div>
+        <div v-if="chunk_map.length" class="w-full px-4 mb-3">
+          <div class="flex gap-px w-full rounded overflow-hidden" style="height:14px">
+            <div
+              v-for="(cell, idx) in chunk_map"
+              :key="idx"
+              :title="`chunks ${cell.start}–${cell.end}: ${cell.received}/${cell.total}`"
+              :style="{
+                flex: '1',
+                backgroundColor: cell.received === cell.total ? '#22c55e'
+                               : cell.received > 0            ? '#facc15'
+                               : '#d1d5db'
+              }"
+            ></div>
+          </div>
+          <div v-if="missing_ranges.length" class="text-xs text-red-600 mt-1 break-all">
+            Missing:
+            {{ missing_ranges.slice(0, 8).map(([s,e]) => s===e ? String(s) : `${s}–${e}`).join(', ') }}<span v-if="missing_ranges.length > 8">, … ({{ missing_ranges.length - 8 }} more ranges)</span>
+          </div>
+        </div>
         <button
           v-if="!is_receiving"
           v-on:click="start_receiver"
@@ -73,6 +92,44 @@
             const seen = max_index + 1;
             const pct = Math.round((keys.length / seen) * 100);
             return { seen, pct };
+          });
+
+          // 全チャンクを最大200セルに分割し、各セルの受信状況を返す。
+          // 緑=全受信・黄=一部受信・灰=未受信 で視覚的にどこが欠けているか分かる。
+          const chunk_map = computed(() => {
+            const total = file_metadata.chunks;
+            if (!total) return [];
+            const cells = Math.min(total, 200);
+            const result = [];
+            for (let c = 0; c < cells; c++) {
+              const start = Math.floor(c * total / cells);
+              const end = Math.floor((c + 1) * total / cells);
+              let received = 0;
+              for (let i = start; i < end; i++) {
+                if (decoded_chunks.value[i] !== undefined) received++;
+              }
+              result.push({ start, end: end - 1, received, total: end - start });
+            }
+            return result;
+          });
+
+          // 未受信チャンクの連続範囲を [start, end] の配列として返す。
+          // Sender 側で範囲指定再送する際に直接入力できる形式にする。
+          const missing_ranges = computed(() => {
+            const total = file_metadata.chunks;
+            if (!total) return [];
+            const ranges = [];
+            let rs = null;
+            for (let i = 0; i < total; i++) {
+              if (decoded_chunks.value[i] === undefined) {
+                if (rs === null) rs = i;
+              } else if (rs !== null) {
+                ranges.push([rs, i - 1]);
+                rs = null;
+              }
+            }
+            if (rs !== null) ranges.push([rs, total - 1]);
+            return ranges;
           });
 
           const make_transfer_id = (metadata) =>
@@ -279,6 +336,8 @@
             stop_receiver,
             clear_cache,
             capture_info,
+            chunk_map,
+            missing_ranges,
           };
         },
       }).mount("#app");

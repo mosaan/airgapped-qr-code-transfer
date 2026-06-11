@@ -32,6 +32,20 @@
             class="w-full"
           />
         </div>
+        <div class="w-1/2 mb-4">
+          <div class="text-xs text-gray-500 mb-1">Resend range (blank = all chunks, 0-indexed)</div>
+          <div class="flex items-center gap-2">
+            <input type="number" min="0" placeholder="start"
+              v-model="range_start"
+              :disabled="is_transferring"
+              class="w-24 border border-gray-300 text-sm px-1 py-0.5" />
+            <span class="text-sm">–</span>
+            <input type="number" min="0" placeholder="end"
+              v-model="range_end"
+              :disabled="is_transferring"
+              class="w-24 border border-gray-300 text-sm px-1 py-0.5" />
+          </div>
+        </div>
         <button
           v-if="!is_transferring"
           v-on:click="start_transfer"
@@ -62,6 +76,8 @@
           const is_transferring = ref(false);
           const chunk_size = 600;
           const chunks_per_sec = ref(7);
+          const range_start = ref('');
+          const range_end = ref('');
           let qrcode_object = "";
 
           const encode_data = (index, input_bytes) => {
@@ -119,20 +135,23 @@
               let loop_count = 0;
               while (is_transferring.value) {
                 loop_count++;
+                // 送信範囲: 入力が空なら全チャンク、そうでなければ指定範囲にクランプ。
+                const from = range_start.value !== '' ? Math.max(0, parseInt(range_start.value) || 0) : 0;
+                const to = range_end.value !== '' ? Math.min(total_chunks - 1, parseInt(range_end.value) || total_chunks - 1) : total_chunks - 1;
+                const range_label = (from === 0 && to === total_chunks - 1) ? '' : ` [${from}–${to}]`;
                 // 各ループ冒頭でメタデータを再送し、途中参加の受信側にも転送情報を伝える。
                 qrcode_object.clear();
                 qrcode_object.makeCode(metadata_string);
-                user_message.value = `Loop ${loop_count}: sending metadata ...`;
+                user_message.value = `Loop ${loop_count}${range_label}: sending metadata ...`;
                 await new Promise((r) => setTimeout(r, Math.round(1000 / chunks_per_sec.value)));
-                for (let i = 0; i < total_chunks; i++) {
+                for (let i = from; i <= to; i++) {
                   if (!is_transferring.value) break;
                   let start = i * chunk_size;
                   let chunk = data_array.subarray(start, start + chunk_size);
                   let encoded_data = encode_data(i, chunk);
-                  if (i === 0) console.log("[CHUNK0] length=", encoded_data.length, "chunk_bytes=", chunk.length);
                   qrcode_object.clear();
                   qrcode_object.makeCode(encoded_data);
-                  user_message.value = `Loop ${loop_count}: chunk ${i + 1}/${total_chunks} ...`;
+                  user_message.value = `Loop ${loop_count}${range_label}: chunk ${i}/${total_chunks - 1} ...`;
                   await new Promise((r) => setTimeout(r, Math.round(1000 / chunks_per_sec.value)));
                   if (!is_transferring.value) break;
                 }
@@ -169,6 +188,8 @@
             stop_transfer,
             is_transferring,
             chunks_per_sec,
+            range_start,
+            range_end,
           };
         },
       }).mount("#app");
